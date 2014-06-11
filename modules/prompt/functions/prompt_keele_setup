@@ -1,0 +1,114 @@
+#
+# Graphical excellence is that which gives to the viewer the greatest number of
+# ideas in the shortest time with the least ink in the smallest space.
+# ― Edward R. Tufte, The Visual Display of Quantitative Information
+#
+# Authors:
+#   Chris Keele <dev@chriskeele.com>
+#   Sorin Ionescu <sorin.ionescu@gmail.com>
+#
+# Screenshots:
+#   http://i.imgur.com/9D4wEHP.png
+#
+
+# Load dependencies.
+pmodload 'helper'
+
+function prompt_keele_pwd {
+  local pwd="${PWD/#$HOME/~}"
+
+  if [[ "$pwd" == (#m)[/~] ]]; then
+    _prompt_keele_pwd="$MATCH"
+    unset MATCH
+  else
+    _prompt_keele_pwd="${${${(@j:/:M)${(@s:/:)pwd}##.#?}:h}%/}/${pwd:t}"
+  fi
+}
+
+function prompt_keele_precmd {
+  setopt LOCAL_OPTIONS
+  unsetopt XTRACE KSH_ARRAYS
+
+  # Format PWD.
+  prompt_keele_pwd
+
+  # # Get Git repository information.
+  # if (( $+functions[git-info] )); then
+  #   git-info
+  # fi
+  # Get Git repository information.
+  if (( $+functions[git-index] )); then
+    git-index
+  fi
+  # Get battery indicator information.
+  if (( $+functions[battery-indicator] )); then
+    battery-indicator
+  fi
+}
+
+function prompt_keele_setup {
+  setopt LOCAL_OPTIONS
+  unsetopt XTRACE KSH_ARRAYS
+  prompt_opts=(cr percent subst)
+
+  # Load required functions.
+  autoload -Uz add-zsh-hook
+
+  # Add hook for calling git-info before each command.
+  add-zsh-hook precmd prompt_keele_precmd
+
+  # Set git-index parameters.
+  zstyle ':prezto:module:git:index:additions:format'       format '❮'
+  zstyle ':prezto:module:git:index:additions:staged'       format '%%B%F{green}%B%f%%b'
+  zstyle ':prezto:module:git:index:additions:mixed'        format '%%B%F{yellow}%B%f%%b'
+  zstyle ':prezto:module:git:index:additions:unstaged'     format '%%B%F{red}%B%f%%b'
+  zstyle ':prezto:module:git:index:additions:none'         format '%F{magenta}%B%f'
+
+  zstyle ':prezto:module:git:index:deletions:format'       format '❮'
+  zstyle ':prezto:module:git:index:deletions:staged'       format '%%B%F{green}%B%f%%b'
+  zstyle ':prezto:module:git:index:deletions:mixed'        format '%%B%F{yellow}%B%f%%b'
+  zstyle ':prezto:module:git:index:deletions:unstaged'     format '%%B%F{red}%B%f%%b'
+  zstyle ':prezto:module:git:index:deletions:none'         format '%F{magenta}%B%f'
+
+  zstyle ':prezto:module:git:index:modifications:format'   format '❮'
+  zstyle ':prezto:module:git:index:modifications:staged'   format '%%B%F{green}%B%f%%b'
+  zstyle ':prezto:module:git:index:modifications:mixed'    format '%%B%F{yellow}%B%f%%b'
+  zstyle ':prezto:module:git:index:modifications:unstaged' format '%%B%F{red}%B%f%%b'
+  zstyle ':prezto:module:git:index:modifications:none'     format '%F{magenta}%B%f'
+
+  zstyle ':prezto:module:git:index:ref:format'  format "$([[ -z "%a" ]] && echo "%%B%F{magenta}%a%f%F{cyan}~%f%%b" || echo "" )$(coalesce "%b" "%p" "%c")"
+  zstyle ':prezto:module:git:index:ref:ahead'   format '%%B%F{green}%B%f%%b'
+  zstyle ':prezto:module:git:index:ref:behind'  format '%%B%F{yellow}%B%f%%b'
+  zstyle ':prezto:module:git:index:ref:both'    format '%%B%F{red}%B%f%%b'
+  zstyle ':prezto:module:git:index:ref:synced'  format '%F{cyan}%B%f'
+
+  zstyle ':prezto:module:git:index:keys' format 'rprompt' "%D%A%M %R"
+
+  # Set battery indicator parameters.
+  zstyle ':prezto:module:battery:indicator:percent'    cmd "pmset -g batt | egrep '([0-9]+\%).*' -o --colour=auto | cut -f1 -d';' | sed 's/%$//'"
+
+  zstyle ':prezto:module:battery:indicator:charging:format'   format '⌁'
+  zstyle ':prezto:module:battery:indicator:charging:full'     format '%%B%F{green}%B%f%%b'
+  zstyle ':prezto:module:battery:indicator:charging:progress' format '%%B%F{yellow}%B%f%%b'
+  zstyle ':prezto:module:battery:indicator:charging:empty'    format '%%B%F{red}%B%f%%b'
+  zstyle ':prezto:module:battery:indicator:charging:needed'   format '%%B%F{red}%B!%f%%b'
+
+  zstyle ':prezto:module:battery:indicator:indicators' number 3
+  zstyle ':prezto:module:battery:indicator:format'     format '❯'
+  zstyle ':prezto:module:battery:indicator:empty'      format '%%F{magenta}%B%%f'
+  zstyle ':prezto:module:battery:indicator:phases'     format 'low'  '%%B%%F{red}%B%%f%b' \
+                                                              'mid'  '%%B%%F{yellow}%B%%f%b' \
+                                                              'high' '%%B%%F{green}%B%%f%b'
+  zstyle ':prezto:module:battery:indicator:full'       format '%%B%%F{green}%B%%f%b'
+
+  zstyle ':prezto:module:battery:indicator:keys' format 'lprompt' '%f%p%e'
+
+
+  # Define prompts.
+  # PROMPT='%F{cyan}${_prompt_keele_pwd}%f%(!. %B%F{red}#%f%b.) %B%F{red}❯%F{yellow}❯%F{green}❯%f%b '
+  PROMPT='%F{cyan}${_prompt_keele_pwd}%f%(!. %B%F{red}#%f%b.) ${battery_indicator[lprompt]} '
+  RPROMPT='${git_index[rprompt]}'
+  SPROMPT='zsh: correct %F{red}%R%f to %F{green}%r%f [nyae]? '
+}
+
+prompt_keele_setup "$@"
