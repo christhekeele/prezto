@@ -1,0 +1,157 @@
+#
+# Exposes battery percentage via the $battery_indicator associative array.
+#
+# Authors:
+#   Chris Keele <dev@chriskeele.com>
+#
+
+# Gets the battery percentage information.
+function battery-indicator {
+
+  local percent_cmd
+  local percent
+
+  local indicators
+  local indicator_size
+
+  local base_format
+
+  local phase_formats
+  local phases
+  local phase_size
+
+  local full
+  local full_format
+  local full_base_formatted
+  local full_formatted
+
+  local empty
+  local empty_format
+  local empty_base_formatted
+  local empty_formatted
+
+  local phase_remaining
+  local phase_percent
+  local phase_num
+  local phase_type
+  local phase_format
+  local phase_base_formatted
+  local phase_formatted
+
+  local indicator_format
+  local -A indicator_formats
+
+  # Clean up previous $battery_indicator.
+  unset battery_indicator
+  typeset -gA battery_indicator
+
+  zstyle -s ':prezto:module:battery:indicator:percent'    cmd    'percent_cmd'
+  # echo "percent_cmd: $percent_cmd"
+
+  percent=$(eval "$percent_cmd")
+  # echo "percent: $percent"
+
+  zstyle -s ':prezto:module:battery:indicator:indicators' number 'indicators'
+  # echo "indicators: $indicators"
+
+  indicator_size=$(( 100 / $indicators ))
+  # echo "indicator_size: $indicator_size"
+
+  zstyle -s ':prezto:module:battery:indicator:format'     format 'base_format'
+  # echo "base_format: $base_format"
+
+  zstyle -a ':prezto:module:battery:indicator:phases'     format 'phase_formats'
+  # echo "phase_formats: $phase_formats"
+
+  phases=$(( $#phase_formats / 2 ))
+  # echo "phases: $phases"
+  phase_size=$(( 100 / $phases ))
+  # echo "phase_size: $phase_size"
+
+  zstyle -s ':prezto:module:battery:indicator:empty'      format 'empty_format'
+  # echo "empty_format: $empty_format"
+  zstyle -s ':prezto:module:battery:indicator:full'       format 'full_format'
+  # echo "full_format: $full_format"
+
+  full=$(( $percent / $indicator_size ))
+  # echo "full: $full"
+  empty=$(( $indicators - $full ))
+  if [[ $phases > 0 && $empty > 0 ]]; then
+    # Make room for phased indicator.
+    empty=$(( $empty - 1 ))
+  fi
+  # echo "empty: $empty"
+
+  if [[ $empty > 0 ]]; then
+    # Lookup base format.
+    if [[ -n "$base_format" ]]; then
+      zformat -f empty_base_formatted "$base_format" "p:$percent" "t:empty"
+    fi
+    # Apply extra formats.
+    zstyle -s ":prezto:module:battery:indicator:empty" format 'empty_format'
+    if [[ -n "$empty_format" ]]; then
+      zformat -f empty_formatted "$empty_format" "B:$empty_base_formatted" "p:$percent" "t:empty"
+    elif [[ -n "$empty_base_formatted" ]]; then
+      empty_formatted=$empty_base_formatted
+    fi
+    empty_formatted=$(printf $(echo $empty_formatted | sed s/%/%%/g)%.0s {1..$(( $empty ))})
+  fi
+  # echo $empty_formatted
+
+  if [[ $full > 0 ]]; then
+    # Lookup base format.
+    if [[ -n "$base_format" ]]; then
+      zformat -f full_base_formatted "$base_format" "p:$percent" "t:full"
+    fi
+    # Apply extra formats.
+    zstyle -s ":prezto:module:battery:indicator:full" format 'full_format'
+    if [[ -n "$full_format" ]]; then
+      zformat -f full_formatted "$full_format" "B:$full_base_formatted" "p:$percent" "t:full"
+    elif [[ -n "$full_base_formatted" ]]; then
+      full_formatted=$full_base_formatted
+    fi
+    full_formatted=$(printf $(echo $full_formatted | sed s/%/%%/g)%.0s {1..$(( $full ))})
+  fi
+  # echo $full_formatted
+
+  if [[ $phases > 0 && $(($full + $empty)) < $indicators ]]; then
+    phase_remaining=$(( $percent - ($full * $indicator_size) ))
+    # echo "phase_remaining: $phase_remaining"
+    phase_percent=$(( (100 * $phase_remaining) / $phase_size ))
+    # echo "phase_percent: $phase_percent"
+    phase_num=$(( (($phase_percent * $phases) / 100) + 1 ))
+    # echo "phase_num: $phase_num"
+    phase_type=$phase_formats[$(( ($phase_num * 2) - 1 ))]
+    # echo "phase_type: $phase_type"
+    phase_format=$phase_formats[$(( $phase_num * 2 ))]
+    # echo "phase_format: $phase_format"
+    # Lookup base format.
+    if [[ -n "$base_format" ]]; then
+      zformat -f phase_base_formatted "$base_format" "p:$percent" "t:$phase_type"
+    fi
+    # Apply extra formats.
+    if [[ -n "$phase_format" ]]; then
+      zformat -f phase_formatted "$phase_format" "B:$phase_base_formatted" "p:$percent" "t:$phase_type"
+    elif [[ -n "$phase_base_formatted" ]]; then
+      phase_formatted=$phase_base_formatted
+    fi
+  fi
+  # echo $phase_formatted
+
+  # Format indicator info.
+  zstyle -a ':prezto:module:battery:indicator:keys' format 'indicator_formats'
+  for indicator_format in ${(k)indicator_formats}; do
+    zformat -f REPLY "$indicator_formats[$indicator_format]" \
+      "e:$empty_formatted" \
+      "f:$full_formatted" \
+      "p:$phase_formatted" \
+      "%:$percent"
+    battery_indicator[$indicator_format]="$REPLY"
+  done
+
+  unset REPLY
+
+  return 0
+}
+
+battery-indicator "$@"
