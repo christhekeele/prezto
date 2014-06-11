@@ -1,0 +1,353 @@
+#
+# Exposes Git repository information via the $git_index associative array.
+#
+# Authors:
+#   Chris Keele <dev@chriskeele.com>
+#   Sorin Ionescu <sorin.ionescu@gmail.com>
+#
+
+# Gets the Git special action (am, bisect, cherry, merge, rebase).
+# Stolen from Sorin's borrowing from vcs_info.
+function _git-action {
+  local action_dir
+  local git_dir="$(git-dir)"
+  local apply_formatted
+  local bisect_formatted
+  local cherry_pick_formatted
+  local cherry_pick_sequence_formatted
+  local merge_formatted
+  local rebase_formatted
+  local rebase_interactive_formatted
+  local rebase_merge_formatted
+
+  for action_dir in \
+    "${git_dir}/rebase-apply" \
+    "${git_dir}/rebase" \
+    "${git_dir}/../.dotest"
+  do
+    if [[ -d "$action_dir" ]] ; then
+      zstyle -s ':prezto:module:git:info:action:apply' format 'apply_formatted' || apply_formatted='apply'
+      zstyle -s ':prezto:module:git:info:action:rebase' format 'rebase_formatted' || rebase_formatted='rebase'
+
+      if [[ -f "${action_dir}/rebasing" ]] ; then
+        print "$rebase_formatted"
+      elif [[ -f "${action_dir}/applying" ]] ; then
+        print "$apply_formatted"
+      else
+        print "${rebase_formatted}/${apply_formatted}"
+      fi
+
+      return 0
+    fi
+  done
+
+  for action_dir in \
+    "${git_dir}/rebase-merge/interactive" \
+    "${git_dir}/.dotest-merge/interactive"
+  do
+    if [[ -f "$action_dir" ]]; then
+      zstyle -s ':prezto:module:git:info:action:rebase-interactive' format 'rebase_interactive_formatted' || rebase_interactive_formatted='rebase-interactive'
+      print "$rebase_interactive_formatted"
+      return 0
+    fi
+  done
+
+  for action_dir in \
+    "${git_dir}/rebase-merge" \
+    "${git_dir}/.dotest-merge"
+  do
+    if [[ -d "$action_dir" ]]; then
+      zstyle -s ':prezto:module:git:info:action:rebase-merge' format 'rebase_merge_formatted' || rebase_merge_formatted='rebase-merge'
+      print "$rebase_merge_formatted"
+      return 0
+    fi
+  done
+
+  if [[ -f "${git_dir}/MERGE_HEAD" ]]; then
+    zstyle -s ':prezto:module:git:info:action:merge' format 'merge_formatted' || merge_formatted='merge'
+    print "$merge_formatted"
+    return 0
+  fi
+
+  if [[ -f "${git_dir}/CHERRY_PICK_HEAD" ]]; then
+    if [[ -d "${git_dir}/sequencer" ]] ; then
+      zstyle -s ':prezto:module:git:info:action:cherry-pick-sequence' format 'cherry_pick_sequence_formatted' || cherry_pick_sequence_formatted='cherry-pick-sequence'
+      print "$cherry_pick_sequence_formatted"
+    else
+      zstyle -s ':prezto:module:git:info:action:cherry-pick' format 'cherry_pick_formatted' || cherry_pick_formatted='cherry-pick'
+      print "$cherry_pick_formatted"
+    fi
+
+    return 0
+  fi
+
+  if [[ -f "${git_dir}/BISECT_LOG" ]]; then
+    zstyle -s ':prezto:module:git:info:action:bisect' format 'bisect_formatted' || bisect_formatted='bisect'
+    print "$bisect_formatted"
+    return 0
+  fi
+
+  return 1
+}
+
+# Given a format type, a sub-formattype, and interpolation arguments
+# finds and renders the format string from the
+# :prezto:module:git:index:type:subtype config
+function _git-index-format {
+  local base_format
+  local base_formatted
+  local full_format
+  local full_formatted
+
+  # Lookup base format.
+  zstyle -s ":prezto:module:git:index:${1}:format" format 'base_format'
+  if [[ -n "$base_format" ]]; then
+    zformat -f base_formatted "$base_format" ${@[3, -1]}
+  fi
+
+  # Format apply extra formats.
+  zstyle -s ":prezto:module:git:index:${1}:${2}" format 'full_format'
+  if [[ -n "$full_format" ]]; then
+    zformat -f formatted "$full_format" "B:$base_formatted" ${@[3, -1]}
+  elif [[ -n "$base_formatted" ]]; then
+    formatted=$base_formatted
+  fi
+
+  echo $formatted
+  return 0
+}
+
+# Gets the Git index information.
+function git-index {
+  # Extended globbing is needed to parse repository status.
+  setopt LOCAL_OPTIONS
+  setopt EXTENDED_GLOB
+
+  local ignore_submodules
+
+  local -A index_formats
+  local index_format
+
+  local additions_staged=0
+  local additions_unstaged=0
+  local additions_ours=0
+  local additions_theirs=0
+  local additions_status
+  local additions_formatted
+
+  local deletions_staged=0
+  local deletions_unstaged=0
+  local deletions_ours=0
+  local deletions_theirs=0
+  local deletions_status
+  local deletions_formatted
+
+  local modifications_staged=0
+  local modifications_unstaged=0
+  local modifications_ours=0
+  local modifications_theirs=0
+  local modifications_status
+  local modifications_formatted
+
+  local branch
+  local commit
+  local position
+  local remote
+  local action
+
+  local ahead=0
+  local behind=0
+  local ahead_and_behind
+  local ahead_and_behind_cmd
+
+  local ref_status
+  local ref_formatted
+
+  # Clean up previous $git_index.
+  unset git_index
+  typeset -gA git_index
+
+  # Return if not inside a Git repository work tree.
+  if ! is-true "$(git rev-parse --is-inside-work-tree 2> /dev/null)"; then
+    return 1
+  fi
+
+  if (( $# > 0 )); then
+    if [[ "$1" == [Oo][Nn] ]]; then
+      git config --bool prompt.showindexinfo true
+    elif [[ "$1" == [Oo][Ff][Ff] ]]; then
+      git config --bool prompt.showindexinfo false
+    else
+      print "usage: $0 [ on | off ]" >&2
+    fi
+    return 0
+  fi
+
+  zstyle -s ':prezto:module:git:status:ignore' submodules 'ignore_submodules'
+
+  # Return if git-index is disabled.
+  if ! is-true "${$(git config --bool prompt.showindexinfo):-true}"; then
+    return 1
+  fi
+
+##
+# INDEX FORMATTING
+#
+  # Use porcelain status for easy parsing.
+  status_cmd="git status --porcelain --ignore-submodules=${ignore_submodules:-none}"
+
+  # Get current status.
+  while IFS=$'\n' read line; do
+    # Count and categorize additions, deletions, and modifications
+    # as staged or unstaged. For our purposes, C (copied) counts as an addition
+    # and R (renamed) and T (type changed) count as a modifications.
+    # T (type change) is undocumented, see http://git.io/FnpMGw.
+    # Also categorizes merge conflicts by ours and theirs.
+    # For a description of these flags, see
+    # https://www.kernel.org/pub/software/scm/git/docs/git-status.html#_short_format
+    # For a table of scenarii, see http://i.imgur.com/2YLu1.png.
+
+    [[ "$line" == [AC][\ DMT]\ * ]]       && (( additions_staged++ ))
+    [[ "$line" == \?\?\ * ]]              && (( additions_unstaged++ ))
+    [[ "$line" == A[AU]\ * ]]             && (( additions_ours++ ))
+    [[ "$line" == [AU]A\ * ]]             && (( additions_theirs++ ))
+
+    [[ "$line" == D[\ MT]\ * ]]           && (( deletions_staged++ ))
+    [[ "$line" == [\ ACMRT]D\ * ]]        && (( deletions_unstaged++ ))
+    [[ "$line" == D[DU]\ * ]]             && (( deletions_ours++ ))
+    [[ "$line" == [DU]D\ * ]]             && (( deletions_theirs++ ))
+
+    [[ "$line" == [MRT][\ DMT]\ * ]]      && (( modifications_staged++ ))
+    [[ "$line" == [\ ACMDRT][MRT]\ * ]]   && (( modifications_unstaged++ ))
+    [[ "$line" == U.\ * ]]                && (( modifications_ours++ ))
+    [[ "$line" == .U\ * ]]                && (( modifications_theirs++ ))
+
+  done < <(${(z)status_cmd} 2> /dev/null)
+
+  # Determine additions status.
+  if (( additions_staged > 0 && additions_unstaged > 0 )); then
+    additions_status=mixed
+  elif (( additions_staged > 0 )); then
+    additions_status=staged
+  elif (( additions_unstaged > 0 )); then
+    additions_status=unstaged
+  else
+    additions_status=none
+  fi
+  # Format additions
+  additions_formatted=$(_git-index-format additions $additions_status \
+    "s:$additions_staged" \
+    "u:$additions_unstaged" \
+    "o:$additions_ours" \
+    "t:$additions_theirs"
+  )
+
+  # Determine deletions status.
+  if (( deletions_staged > 0 && deletions_unstaged > 0 )); then
+    deletions_status=mixed
+  elif (( deletions_staged > 0 )); then
+    deletions_status=staged
+  elif (( deletions_unstaged > 0 )); then
+    deletions_status=unstaged
+  else
+    deletions_status=none
+  fi
+  # Format deletions.
+  deletions_formatted=$(_git-index-format deletions $deletions_status \
+    "s:$deletions_staged" \
+    "u:$deletions_unstaged" \
+    "o:$deletions_ours" \
+    "t:$deletions_theirs"
+  )
+
+  # Determine deletions status.
+  if (( modifications_staged > 0 && modifications_unstaged > 0 )); then
+    modifications_status=mixed
+  elif (( modifications_staged > 0 )); then
+    modifications_status=staged
+  elif (( modifications_unstaged > 0 )); then
+    modifications_status=unstaged
+  else
+    modifications_status=none
+  fi
+  # Format deletions.
+  modifications_formatted=$(_git-index-format modifications $modifications_status \
+    "s:$modifications_staged" \
+    "u:$modifications_unstaged" \
+    "o:$modifications_ours" \
+    "t:$modifications_theirs"
+  )
+
+##
+# REF FORMATTING
+#
+  # Gets the branch.
+  branch="${$(git symbolic-ref HEAD 2> /dev/null)#refs/heads/}"
+
+  if [[ -n "$branch" ]]; then
+    # Gets the remote.
+    remote_cmd='git rev-parse --symbolic-full-name --verify HEAD@{upstream}'
+    remote="${$(${(z)remote_cmd} 2> /dev/null)##refs/remotes/}"
+    # Gets the position.
+    position="$(git describe --contains --all HEAD 2> /dev/null)"
+  fi
+
+  # Gets the commit.
+  commit="$(git rev-parse HEAD 2> /dev/null)"
+
+  # Gets the commit difference counts between local and remote.
+  ahead_and_behind_cmd='git rev-list --count --left-right HEAD...@{upstream}'
+
+  # Get ahead and behind counts.
+  ahead_and_behind="$(${(z)ahead_and_behind_cmd} 2> /dev/null)"
+
+  ahead="$ahead_and_behind[(w)1]"
+  behind="$ahead_and_behind[(w)2]"
+
+  # Gets the action.
+  action="$(_git-action)"
+
+  # Get ref status.
+  if (( ref_ahead > 0 && ref_behind > 0 )); then
+    ref_status=both
+  elif (( ref_ahead > 0 )); then
+    ref_status=ahead
+  elif (( ref_behind > 0 )); then
+    ref_status=behind
+  else
+    ref_status=synced
+  fi
+  # Format ref.
+  ref_formatted=$(_git-index-format ref $ref_status \
+    "a:$action" \
+    "b:$branch" \
+    "c:$commit" \
+    "p:$position" \
+    "r:$remote"
+  )
+
+##
+# ALL TOGETHER NOW
+#
+  # Format index info.
+  zstyle -a ':prezto:module:git:index:keys' format 'index_formats'
+  for index_format in ${(k)index_formats}; do
+    zformat -f REPLY "$index_formats[$index_format]" \
+      "A:$additions_formatted" \
+      "D:$deletions_formatted" \
+      "M:$modifications_formatted" \
+      "R:$ref_formatted" \
+      "a:$action" \
+      "b:$branch" \
+      "c:$commit" \
+      "p:$position" \
+      "r:$remote"
+    git_index[$index_format]="$REPLY"
+  done
+
+  unset REPLY
+
+  return 0
+}
+
+git-index "$@"
