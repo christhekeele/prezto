@@ -10,6 +10,11 @@ Archive
 
 Provides functions to list and extract archives.
 
+Battery
+-------
+
+Provides functions to display the current battery life in prompts.
+
 Command-Not-Found
 -----------------
 
