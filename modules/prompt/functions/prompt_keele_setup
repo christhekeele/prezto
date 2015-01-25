@@ -109,8 +109,11 @@ function prompt_keele_setup {
 
 
   # Define prompts.
-  # PROMPT='%F{cyan}${_prompt_keele_pwd}%f%(!. %B%F{red}#%f%b.) %B%F{red}❯%F{yellow}❯%F{green}❯%f%b '
-  PROMPT='%F{cyan}${_prompt_keele_pwd}%f%(!. %B%F{red}#%f%b.) ${battery_indicator[lprompt]} '
+  if [ -n "$SSH_CLIENT" ] || [ -n "$SSH_TTY" ] || [[ $(ps -o comm= -p $PPID) =~ ssh ]]; then
+    PROMPT='%F{magenta}%n@%m%f %F{cyan}${_prompt_keele_pwd}%f%(!. %B%F{red}#%f%b.) ${battery_indicator[lprompt]} '
+  else
+    PROMPT='%F{cyan}${_prompt_keele_pwd}%f%(!. %B%F{red}#%f%b.) ${battery_indicator[lprompt]} '
+  fi
   RPROMPT='${git_index[rprompt]}'
   SPROMPT='zsh: correct %F{red}%R%f to %F{green}%r%f [nyae]? '
 }
