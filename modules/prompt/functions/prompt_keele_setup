@@ -85,7 +85,11 @@ function prompt_keele_setup {
   zstyle ':prezto:module:git:index:keys' format 'rprompt' "%D%A%M %R"
 
   # Set battery indicator parameters.
-  zstyle ':prezto:module:battery:indicator:percent'    cmd "pmset -g batt | egrep '([0-9]+\%).*' -o --colour=auto | cut -f1 -d';' | sed 's/%$//'"
+  if [[ $OSTYPE == 'darwin'* ]]; then
+    zstyle ':prezto:module:battery:indicator:percent'    cmd "pmset -g batt | egrep '([0-9]+\%).*' -o --colour=auto | cut -f1 -d';' | sed 's/%$//'"
+  else
+    zstyle ':prezto:module:battery:indicator:percent'    cmd "echo '100'"
+  fi
 
   zstyle ':prezto:module:battery:indicator:charging:format'   format '⌁'
   zstyle ':prezto:module:battery:indicator:charging:full'     format '%%B%F{green}%B%f%%b'
